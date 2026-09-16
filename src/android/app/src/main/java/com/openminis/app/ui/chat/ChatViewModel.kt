@@ -1398,6 +1398,17 @@ class ChatViewModel(
     val enhancedCacheEnabled: StateFlow<Boolean> = _enhancedCacheEnabled.asStateFlow()
 
     /**
+     * [GH#357] Independent toggle for daily-memory injection. The main
+     * `_memoryEnabled` flag gates all memory reads (memory_get, memory_write
+     * and the daily/global system-prompt fragments). This separate flag lets
+     * the user keep memory_get/memory_write active while suppressing the
+     * daily-log fragment that breaks prompt caching whenever new content is
+     * appended. Default is true — same behaviour as before this fix.
+     */
+    internal val _memoryDailyInjectionEnabled = MutableStateFlow(true)
+    val memoryDailyInjectionEnabled: StateFlow<Boolean> = _memoryDailyInjectionEnabled.asStateFlow()
+
+    /**
      * [T-android-enhanced-cache] Whether the Enhanced Cache menu item is shown.
      * Mirrors iOS `showEnhancedCacheToggle` (commit 57aaf122): only visible when
      * the current session's resolved provider instance is the *official*
@@ -1780,6 +1791,12 @@ class ChatViewModel(
             subtitle = "",
         ),
         SlashCommand(
+            id = "memorydaily",
+            icon = Icons.Default.Psychology,
+            title = "Memory Daily",
+            subtitle = "[GH#357] Toggle daily-log injection on/off",
+        ),
+        SlashCommand(
             id = "thinking",
             icon = Icons.Default.Lightbulb,
             title = "Thinking",
@@ -1842,11 +1859,12 @@ class ChatViewModel(
         _slashMenuSelectedIndex.value = -1
 
         when (cmd.id) {
-            "compact" -> compactAll()
-            "memory" -> toggleMemoryEnabled()
-            "thinking" -> toggleThinking()
-            "clear" -> _clearChatConfirmRequested.value = true
-            else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
+             "compact" -> compactAll()
+             "memory" -> toggleMemoryEnabled()
+             "memorydaily" -> toggleMemoryDailyInjectionEnabled()
+             "thinking" -> toggleThinking()
+             "clear" -> _clearChatConfirmRequested.value = true
+             else -> AppLogger.info(TAG, "[Slash] unrecognized id=${cmd.id} — no dispatch")
         }
         // [T-android-slash-menu-align-ios-prepend] Action command: restore the
         // saved ORIGINAL (stripping the injected "/ " prefix) so the body text
@@ -1872,6 +1890,21 @@ class ChatViewModel(
         }
         appendSystemInfo(
             text = "Memory writes ${if (newValue) "enabled" else "disabled"}. Reads are unaffected.",
+            iconKind = "memory",
+        )
+    }
+
+    /**
+     * [GH#357] Toggle daily-memory fragment injection independently from the
+     * main memory toggle. Global memory (GLOBAL.md) is always shown when
+     * memory is on — only the time-varying daily log block is affected, which
+     * is what destabilises prompt caching.
+     */
+    internal fun toggleMemoryDailyInjectionEnabled() {
+        val newValue = !_memoryDailyInjectionEnabled.value
+        _memoryDailyInjectionEnabled.value = newValue
+        appendSystemInfo(
+            text = "Daily memory injection ${if (newValue) "enabled" else "disabled"}. Global memory still active.",
             iconKind = "memory",
         )
     }
@@ -10240,7 +10273,15 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // tool surface and SOUL.md is part of identity, both orthogonal
         // to the memory feature.
         val globalMemoryFragment = if (memoryOn) memoryRepository?.loadGlobalMemoryFragment() else null
-        val dailyMemoryFragment = if (memoryOn) memoryRepository?.loadRecentDailyMemoryFragment() else null
+        // [GH#357] Daily-log injection is gated separately from the main
+        // memory toggle: disabling it stabilises the system-prompt prefix for
+        // prompt caching while still allowing memory_get / memory_write to
+        // function. The maxAgeDays cap (7) further limits drift on enabled
+        // sessions.
+        val dailyMemoryFragment =
+            if (memoryOn && _memoryDailyInjectionEnabled.value)
+                memoryRepository?.loadRecentDailyMemoryFragment(maxAgeDays = 7)
+            else null
         // [XSessionDiag] Hypothesis 3: ties the memory-injection sizes to a
         // SESSION id. MemoryRepository itself has no session context, so its own
         // `memory/daily-inject` line (which names the source files) cannot say who
