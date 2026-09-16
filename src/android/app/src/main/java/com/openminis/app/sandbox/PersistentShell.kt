@@ -516,8 +516,17 @@ class PersistentShell(
             }
 
             if (result == null) {
-                // Timeout — cancel pending, but don't kill the shell
+                // Timeout (GH#358). The command is still running inside the
+                // persistent shell's /bin/sh, and that shell will not read the
+                // next command off stdin until the current one finishes. Merely
+                // dropping the callback therefore leaves every later command
+                // queued behind a process that may never exit — the session's
+                // shell execution is dead until it is recreated. Tear the shell
+                // down here so the next execute() gets a fresh one;
+                // ExecutionCoordinator re-injects the env-var snapshot on it.
+                Log.w(TAG, "Command timed out after ${timeout}ms — killing shell so the next command gets a clean channel")
                 pendingCallback = null
+                stop()
                 Pair("[Command timed out after ${timeout / 1000}s]", 124)
             } else {
                 result

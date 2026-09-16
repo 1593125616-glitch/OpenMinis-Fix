@@ -1,6 +1,8 @@
 package com.openminis.app.ui.settings
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -158,6 +160,7 @@ fun ProviderDetailScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         fieldModifier = Modifier.bringIntoViewOnFocus(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                     )
                     if (labelChanged) {
                         Spacer(modifier = Modifier.width(8.dp))

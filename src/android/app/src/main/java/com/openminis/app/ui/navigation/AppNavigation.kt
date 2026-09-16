@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -647,8 +649,10 @@ fun AppNavigation(
                         navController.safePopBackStack()
                     },
                     onRemoveWithFiles = {
-                        vm.removeHistoryRecordWithFiles(id)
-                        navController.safePopBackStack()
+                        rememberCoroutineScope().launch {
+                            vm.removeHistoryRecordWithFiles(id)
+                            navController.safePopBackStack()
+                        }
                     },
                     onOpenDestination = { name ->
                         navController.safeNavigate(
