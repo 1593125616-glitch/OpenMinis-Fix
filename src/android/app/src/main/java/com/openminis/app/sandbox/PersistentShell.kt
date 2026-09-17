@@ -47,6 +47,9 @@ class PersistentShell(
     @Volatile
     private var stdinWriter: BufferedWriter? = null
 
+    @Volatile
+    private var stdoutStream: java.io.InputStream? = null
+
     private val isStarting = AtomicBoolean(false)
 
     /** Pending command callback — only one command at a time. */
@@ -256,6 +259,7 @@ class PersistentShell(
         val p = processBuilder.start()
         process = p
         stdinWriter = BufferedWriter(OutputStreamWriter(p.outputStream, StandardCharsets.UTF_8))
+        stdoutStream = p.inputStream
 
         // Start background reader thread
         Thread({
@@ -573,8 +577,16 @@ class PersistentShell(
 
     /**
      * Stop the persistent shell.
+     *
+     * GH#358: on timeout the reader thread was left blocking forever on
+     * `InputStream.read()` because nothing closed the stdout stream.  Close
+     * both stdin and stdout here so the readLoop unblocks, then kill the
+     * process — the reader will see EOF / broken pipe and fall through to the
+     * "process exited" path which cleans up pending callbacks.
      */
     fun stop() {
+        try { stdoutStream?.close() } catch (_: Exception) {}
+        stdoutStream = null
         try { stdinWriter?.close() } catch (_: Exception) {}
         stdinWriter = null
         process?.destroyForcibly()
