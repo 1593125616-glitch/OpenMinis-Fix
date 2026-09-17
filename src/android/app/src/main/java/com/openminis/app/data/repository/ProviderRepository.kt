@@ -2923,7 +2923,7 @@ class ProviderRepository(private val context: Context) {
                 // the same model from appearing twice under different names.
                 val rawDisplayName = m.optString("displayName", modelId)
                 val displayName = if (rawDisplayName == modelId) {
-                    LLMModel.ModelMeta.modelDisplayName(modelId)
+                    LLMModel.modelDisplayName(modelId)
                 } else {
                     rawDisplayName
                 }

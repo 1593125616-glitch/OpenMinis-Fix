@@ -129,9 +129,11 @@ fun ModelEntryDetailScreen(
                          // `T-custom-model-name-trailing-space`: preserve the user's
                          // spacing verbatim in the display NAME. Only a whitespace-only
                          // entry counts as empty (falls back to baseModel displayName).
-                         displayName = if (displayName.trim().isEmpty) null
-                             else if (displayName != baseModel.displayName) displayName
-                             else null,
+                         displayName = displayName.trim().let { trimmed ->
+                             if (trimmed.isEmpty()) null
+                             else if (trimmed != baseModel.displayName) displayName
+                             else null
+                         },
                         maxOutputTokens = maxOutputTokensText.trim().toIntOrNull()?.takeIf { it > 0 },
                         contextWindow = contextWindowText.trim().toIntOrNull()?.takeIf { it > 0 },
                         // supportsReasoning: persist only when user diverged from base.

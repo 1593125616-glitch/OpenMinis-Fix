@@ -641,6 +641,7 @@ fun AppNavigation(
                 // the screen.
                 val vm: com.openminis.app.ui.settings.backup.BackupViewModel =
                     androidx.lifecycle.viewmodel.compose.viewModel()
+                val scope = rememberCoroutineScope()
                 com.openminis.app.ui.settings.backup.BackupHistoryDetailScreen(
                     record = record,
                     onBack = { navController.safePopBackStack() },
@@ -649,7 +650,7 @@ fun AppNavigation(
                         navController.safePopBackStack()
                     },
                     onRemoveWithFiles = {
-                        rememberCoroutineScope().launch {
+                        scope.launch {
                             vm.removeHistoryRecordWithFiles(id)
                             navController.safePopBackStack()
                         }
