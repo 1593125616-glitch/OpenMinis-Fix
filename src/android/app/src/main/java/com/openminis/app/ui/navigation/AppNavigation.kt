@@ -646,7 +646,7 @@ fun AppNavigation(
                     record = record,
                     onBack = { navController.safePopBackStack() },
                     onRemove = {
-                        history.remove(id)
+                        vm.removeHistoryRecord(id)
                         navController.safePopBackStack()
                     },
                     onRemoveWithFiles = {

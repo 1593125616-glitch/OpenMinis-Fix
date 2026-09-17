@@ -230,6 +230,48 @@ class AgentForegroundService : Service() {
         val sessionCount = intent?.getIntExtra(EXTRA_SESSION_COUNT, 0) ?: 0
         val toolStatus = intent?.getStringExtra(EXTRA_TOOL_STATUS) ?: "Idle"
 
+        // [T-android-fgs-race-329] On Android 14+ the AMS requires every
+        // startForegroundService() to be matched by a startForeground() call
+        // inside the service's onStartCommand. A known race: when the last
+        // session ends, stopService() is issued but a concurrent
+        // updateService() may have already queued a startForegroundService().
+        // The system delivers that new start, our onStartCommand sees
+        // sessionCount==0 and activeSessions.isEmpty(), and calls stopSelf()
+        // directly — violating the contract and raising
+        // ForegroundServiceDidNotStartInTimeException.
+        //
+        // Fix: if we were started with zero sessions, satisfy the contract
+        // with a minimal notification before unwinding.
+        if (sessionCount == 0 && SessionActivityTracker.activeSessions.value.isEmpty()) {
+            val stub = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(getString(R.string.bg_service_notification_text_completed, "", ""))
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setOngoing(false)
+                .build()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        stub,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                    )
+                } else {
+                    startForeground(NOTIFICATION_ID, stub)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "race-329 stub startForeground failed: ${t.message}")
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val notification = buildNotification(sessionCount, toolStatus)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
