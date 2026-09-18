@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import com.openminis.app.MinisApp
 import com.openminis.app.R
@@ -868,11 +869,26 @@ class AgentForegroundService : Service() {
             )
         }
 
+        // [#6] Android 11 has no ProgressStyle / shortCriticalText. RemoteViews
+        // Chronometer ticks in the shade without a 1s notify loop and without
+        // pretending to be a media session.
+        val compactText = if (isCompleted) collapsedText else "$sessionLabel | $toolStatus"
+        val views = RemoteViews(packageName, R.layout.notification_agent_status)
+        views.setTextViewText(R.id.notif_text, compactText)
+        if (isCompleted) {
+            views.setChronometer(R.id.notif_elapsed, anchorMs, null, false)
+            views.setTextViewText(R.id.notif_elapsed, timeString)
+        } else {
+            views.setChronometer(R.id.notif_elapsed, anchorMs, null, true)
+        }
+
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(smallIconRes(toolName, isCompleted))
             .setContentTitle(titleText)
-            .setContentText(collapsedText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(collapsedText))
+            .setContentText(compactText)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(views)
+            .setCustomBigContentView(RemoteViews(views))
             .setOngoing(true)
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
@@ -1022,6 +1038,7 @@ class AgentForegroundService : Service() {
      */
     private fun toolDisplayLabel(toolName: String): String = when (toolName) {
         "shell_execute" -> "Minis is using Shell"
+        "task_output" -> "Minis is reading Task"
         "file_read" -> "Minis is reading File"
         "file_write" -> "Minis is using Editor"
         "file_edit" -> "Minis is editing File"
@@ -1050,7 +1067,7 @@ class AgentForegroundService : Service() {
         if (isCompleted) R.drawable.ic_notification_completed else toolSmallIconRes(toolName)
 
     private fun toolSmallIconRes(toolName: String?): Int = when (toolName) {
-        "shell_execute" -> android.R.drawable.ic_menu_edit
+        "shell_execute", "task_output" -> android.R.drawable.ic_menu_edit
         "file_read", "read_image" -> android.R.drawable.ic_menu_view
         "file_write", "file_edit" -> android.R.drawable.ic_menu_edit
         "browser_use" -> android.R.drawable.ic_menu_compass

@@ -56,6 +56,25 @@ class PersistentShell(
     @Volatile
     private var pendingCallback: CommandCallback? = null
 
+    /**
+     * [OpenMinis-Fix #7] Stdout captured when a command is cancelled or the
+     * shell is killed mid-flight. [takeInterruptedOutput] is destructive.
+     */
+    @Volatile
+    private var interruptedOutput: String = ""
+
+    fun takeInterruptedOutput(): String {
+        val s = interruptedOutput
+        interruptedOutput = ""
+        return s
+    }
+
+    private fun stashInterruptedOutput(text: String) {
+        if (text.isNotEmpty() && text.length >= interruptedOutput.length) {
+            interruptedOutput = text
+        }
+    }
+
     val isAlive: Boolean
         get() = process?.isAlive == true
 
@@ -116,6 +135,7 @@ class PersistentShell(
                         // Sticky for this shell's lifetime: every later respawn
                         // keeps the workaround instead of rediscovering it.
                         useNoSeccomp = true
+                        PRootKernel.stickyNoSeccomp = true
                         startProcess()
                         if (isAlive) {
                             com.openminis.app.logging.AppLogger.warning(
@@ -504,7 +524,9 @@ class PersistentShell(
                     pendingCallback = cb
 
                     cont.invokeOnCancellation {
+                        val cb = pendingCallback
                         pendingCallback = null
+                        stashInterruptedOutput(cb?.output?.toString().orEmpty())
                     }
 
                     try {
@@ -592,6 +614,7 @@ class PersistentShell(
         process?.destroyForcibly()
         process = null
         pendingCallback?.let {
+            stashInterruptedOutput(it.output.toString())
             it.onComplete?.invoke(it.output.toString(), -1)
         }
         pendingCallback = null

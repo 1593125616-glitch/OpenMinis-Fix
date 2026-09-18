@@ -4966,7 +4966,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let placeholderParts = orphanedToolUses.map { (id, name) in
                 AgentContentPart.toolResult(
                     id: id, name: name,
-                    content: "Tool execution was interrupted by an unexpected error.",
+                    content: "Tool execution was interrupted before a result was returned.",
                     isError: true
                 )
             }
@@ -5046,6 +5046,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     self.committedBlockCount = 0
                 }
             }
+
+            // [GH#352] Strip inline base64 / data-URI images from text first.
+            scrubInlineMediaFromHistory()
 
             // Trim old images: keep only the most recent `kImageContextKeepCount`
             // images in history; older ones become text placeholders so the model

@@ -31,6 +31,18 @@ object ContextOffload {
     const val OFFLOADED_PREFIX = "[CONTEXT OFFLOADED]"
 
     /**
+     * [GH#352] Text this large must leave the prompt even if it sits in the
+     * protected last-4-messages window. Token-threshold offload never sees
+     * the latest tool result (that's the protected tail), and the char/3.5
+     * estimator under-counts base64 by ~2.5x, so a 1MB PNG-as-text (~960k
+     * real tokens) was sent raw and 400'd the session forever.
+     */
+    const val HARD_OFFLOAD_CHARS = 32_768
+
+    fun isForceOffloadContent(content: String): Boolean =
+        content.length >= HARD_OFFLOAD_CHARS && !isOffloadReadback(content)
+
+    /**
      * Host-side persistent dir for [sessionId]'s tool offloads. Lazily
      * created on first write — callers should call [ensureToolsDir] before
      * writing.
