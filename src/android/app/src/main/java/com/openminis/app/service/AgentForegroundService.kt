@@ -73,6 +73,17 @@ class AgentForegroundService : Service() {
         private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
         private const val ACTION_STOP = "com.openminis.app.STOP_AGENT_SERVICE"
 
+        /** Wall-clock `when` so [NotificationCompat.Builder.setUsesChronometer] ticks elapsed. */
+        internal fun wallClockWhenMs(nowWallMs: Long, elapsedMs: Long): Long =
+            nowWallMs - elapsedMs.coerceAtLeast(0L)
+
+        /** Status-bar ticker ("lyrics") line — title plus live tool status. */
+        internal fun tickerLine(title: String, status: String): String {
+            val s = status.trim()
+            if (s.isEmpty() || s == title) return title
+            return "$title · $s"
+        }
+
         /**
          * Starts or updates the foreground service with current status.
          */
@@ -98,6 +109,13 @@ class AgentForegroundService : Service() {
     }
 
     private var startTimeMs: Long = 0L
+
+    /**
+     * [#6] Sidecar MediaSession so SystemUI draws a transport / "player"
+     * card. Position is elapsed time; speed 1.0 lets the ROM advance the
+     * clock locally (same trick as a music app). No audio is played.
+     */
+    private var mediaSession: android.support.v4.media.session.MediaSessionCompat? = null
     /**
      * Partial wake lock acquired while the foreground service is alive.
      * Required because Android can put the CPU to sleep even with a
@@ -158,6 +176,7 @@ class AgentForegroundService : Service() {
         }
         createNotificationChannel()
         startTimeMs = SystemClock.elapsedRealtime()
+        ensureMediaSession()
         acquireWakeLock()
         startOverlayObserver()
         Log.d(TAG, "Service created")
@@ -357,6 +376,7 @@ class AgentForegroundService : Service() {
 
     override fun onDestroy() {
         releaseWakeLock()
+        releaseMediaSession()
         try {
             overlayController?.hide()
         } catch (_: Throwable) {}
@@ -675,6 +695,77 @@ class AgentForegroundService : Service() {
         }
     }
 
+    private fun ensureMediaSession(): android.support.v4.media.session.MediaSessionCompat? {
+        mediaSession?.let { return it }
+        return try {
+            val session = android.support.v4.media.session.MediaSessionCompat(this, "minis_agent").apply {
+                setFlags(
+                    android.support.v4.media.session.MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                        android.support.v4.media.session.MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS,
+                )
+                setCallback(object : android.support.v4.media.session.MediaSessionCompat.Callback() {
+                    override fun onPause() {
+                        SessionActivityTracker.cancelAllActiveStreams()
+                    }
+                    override fun onStop() {
+                        SessionActivityTracker.cancelAllActiveStreams()
+                        stopSelf()
+                    }
+                })
+            }
+            mediaSession = session
+            session
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaSession unavailable: ${t.message}")
+            null
+        }
+    }
+
+    private fun syncAgentMediaSession(
+        session: android.support.v4.media.session.MediaSessionCompat,
+        title: String,
+        status: String,
+        elapsedMs: Long,
+        isCompleted: Boolean,
+    ) {
+        val meta = android.support.v4.media.MediaMetadataCompat.Builder()
+            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, title)
+            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, status)
+            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, status)
+            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, status)
+        if (isCompleted) {
+            meta.putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, elapsedMs)
+        }
+        session.setMetadata(meta.build())
+        val state = if (isCompleted) {
+            android.support.v4.media.session.PlaybackStateCompat.STATE_PAUSED
+        } else {
+            android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING
+        }
+        val speed = if (isCompleted) 0f else 1.0f
+        session.setPlaybackState(
+            android.support.v4.media.session.PlaybackStateCompat.Builder()
+                .setActions(
+                    android.support.v4.media.session.PlaybackStateCompat.ACTION_STOP or
+                        android.support.v4.media.session.PlaybackStateCompat.ACTION_PAUSE,
+                )
+                .setState(state, elapsedMs, speed, SystemClock.elapsedRealtime())
+                .build(),
+        )
+        session.isActive = !isCompleted
+    }
+
+    private fun releaseMediaSession() {
+        try {
+            mediaSession?.isActive = false
+            mediaSession?.release()
+        } catch (t: Throwable) {
+            Log.w(TAG, "MediaSession release failed: ${t.message}")
+        } finally {
+            mediaSession = null
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -869,35 +960,44 @@ class AgentForegroundService : Service() {
             )
         }
 
-        // [#6] Android 11 has no ProgressStyle / shortCriticalText. RemoteViews
-        // Chronometer ticks in the shade without a 1s notify loop and without
-        // pretending to be a media session.
+        // [#6] Flyme 9 / Android 11: custom RemoteViews Chronometer is often
+        // dropped from the collapsed shade, so the user never sees elapsed
+        // time. The issue comments spell out the working path:
+        //   1. setUsesChronometer + setWhen  → standard header clock
+        //   2. setTicker(状态行)            → status-bar "lyrics"
+        //   3. MediaSession + MediaStyle    → player card; position ticks locally
         val compactText = if (isCompleted) collapsedText else "$sessionLabel | $toolStatus"
-        val views = RemoteViews(packageName, R.layout.notification_agent_status)
-        views.setTextViewText(R.id.notif_text, compactText)
-        if (isCompleted) {
-            views.setChronometer(R.id.notif_elapsed, anchorMs, null, false)
-            views.setTextViewText(R.id.notif_elapsed, timeString)
-        } else {
-            views.setChronometer(R.id.notif_elapsed, anchorMs, null, true)
+        val ticker = tickerLine(titleText, toolStatus)
+        val whenMs = wallClockWhenMs(System.currentTimeMillis(), elapsedMs)
+        val session = ensureMediaSession()
+        if (session != null) {
+            syncAgentMediaSession(
+                session = session,
+                title = titleText,
+                status = toolStatus,
+                elapsedMs = elapsedMs,
+                isCompleted = isCompleted,
+            )
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(smallIconRes(toolName, isCompleted))
             .setContentTitle(titleText)
             .setContentText(compactText)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .setCustomContentView(views)
-            .setCustomBigContentView(RemoteViews(views))
+            .setTicker(ticker)
+            .setWhen(whenMs)
+            .setShowWhen(true)
+            .setUsesChronometer(!isCompleted)
             .setOngoing(true)
-            .setShowWhen(false)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(
+                if (session != null) NotificationCompat.CATEGORY_TRANSPORT
+                else NotificationCompat.CATEGORY_SERVICE,
+            )
 
-        // [T-android-live-update-completed] Same rule as the promoted branch:
-        // no Stop once there is nothing left to stop.
         if (!isCompleted) {
             builder.addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
@@ -906,12 +1006,30 @@ class AgentForegroundService : Service() {
             )
         }
 
-        if (isToolRunning) {
-            // Tools rarely report determinate progress (shell/browser/a11y
-            // are open-ended). Always indeterminate while a tool is in
-            // flight; explicitly drop progress when not, so the bar
-            // disappears at idle/between-turn moments.
-            builder.setProgress(0, 0, true)
+        if (session != null) {
+            val mediaStyle = androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(session.sessionToken)
+                .setShowCancelButton(true)
+                .setCancelButtonIntent(stopPendingIntent)
+            if (!isCompleted) {
+                mediaStyle.setShowActionsInCompactView(0)
+            }
+            builder.setStyle(mediaStyle)
+        } else {
+            val views = RemoteViews(packageName, R.layout.notification_agent_status)
+            views.setTextViewText(R.id.notif_text, compactText)
+            if (isCompleted) {
+                views.setChronometer(R.id.notif_elapsed, anchorMs, null, false)
+                views.setTextViewText(R.id.notif_elapsed, timeString)
+            } else {
+                views.setChronometer(R.id.notif_elapsed, anchorMs, null, true)
+            }
+            builder.setStyle(NotificationCompat.DecoratedCustomViewStyle())
+                .setCustomContentView(views)
+                .setCustomBigContentView(RemoteViews(views))
+            if (isToolRunning) {
+                builder.setProgress(0, 0, true)
+            }
         }
 
         return builder.build()

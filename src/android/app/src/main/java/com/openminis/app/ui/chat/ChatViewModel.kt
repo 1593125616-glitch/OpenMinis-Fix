@@ -462,6 +462,27 @@ class ChatViewModel(
         private val AUTO_RETRY_DELAYS_SEC = intArrayOf(1, 2, 4)
 
         /**
+         * 429 backoff (seconds). Caps at 60s and then repeats — DeepSeek-style
+         * burst quotas clear in tens of seconds; aborting drops tool results.
+         */
+        private val RATE_LIMIT_RETRY_DELAYS_SEC = intArrayOf(5, 10, 20, 40, 60)
+
+        /** Same-provider retry: 429 never exhausts; other transients follow [AUTO_RETRY_DELAYS_SEC]. */
+        internal fun shouldRetrySameProvider(
+            retryAttempt: Int,
+            isRateLimit: Boolean,
+            isTransient: Boolean,
+        ): Boolean {
+            if (isRateLimit) return true
+            return isTransient && retryAttempt < AUTO_RETRY_DELAYS_SEC.size
+        }
+
+        internal fun sameProviderRetryDelaySec(retryAttempt: Int, isRateLimit: Boolean): Int {
+            val table = if (isRateLimit) RATE_LIMIT_RETRY_DELAYS_SEC else AUTO_RETRY_DELAYS_SEC
+            return table[retryAttempt.coerceIn(0, table.lastIndex)]
+        }
+
+        /**
          * Factory for use with `viewModel(factory = ...)`. Binds the ChatViewModel
          * to a NavBackStackEntry's ViewModelStore so the streaming job survives
          * configuration changes (rotation) and re-entering the chat screen while
@@ -8512,21 +8533,26 @@ class ChatViewModel(
                         actual.detail.contains(Regex("[5][0-9]{2}"))
                     // Auto-retry on transient network/5xx/transient errors on the SAME provider
                     // before considering a fallback (mirrors iOS streamWithAutoRetry).
-                    // Rate limits are provider-level signals that should trigger fallback immediately,
-                    // not retry on the same provider.
+                    // 429 is retried on the same provider (unbounded, longer backoff)
+                    // instead of aborting the turn when the group has no next model.
                     val isTransient = actual is com.openminis.app.data.model.LLMError.NetworkError ||
                         actual is com.openminis.app.data.model.LLMError.TransientError ||
                         is5xx
-                    if (isTransient && retryAttempt < AUTO_RETRY_DELAYS_SEC.size) {
-                        val delaySec = AUTO_RETRY_DELAYS_SEC[retryAttempt]
+                    if (shouldRetrySameProvider(retryAttempt, isRateLimit, isTransient)) {
+                        val delaySec = sameProviderRetryDelaySec(retryAttempt, isRateLimit)
                         retryAttempt += 1
                         val errDesc = actual.message ?: actual.javaClass.simpleName
-                        Log.w(TAG, "🔁 Transient error on ${currentProvider.model.displayName}, retry $retryAttempt/${AUTO_RETRY_DELAYS_SEC.size} in ${delaySec}s: $errDesc")
+                        val retryLabel = if (isRateLimit) {
+                            "$errDesc — retrying (#$retryAttempt) in ${delaySec}s…"
+                        } else {
+                            "$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…"
+                        }
+                        Log.w(TAG, "🔁 ${if (isRateLimit) "Rate limit" else "Transient error"} on ${currentProvider.model.displayName}, $retryLabel")
                         withContext(Dispatchers.Main) {
                             _autoRetryAttempt.value = retryAttempt
                             // Show the error inline on the streaming assistant message during countdown.
                             // Keeps isStreaming=true so the UI doesn't tear down the streaming state.
-                            setTransientInlineError("$errDesc — retrying ($retryAttempt/${AUTO_RETRY_DELAYS_SEC.size})…")
+                            setTransientInlineError(retryLabel)
                         }
                         try {
                             for (remaining in delaySec downTo 1) {
