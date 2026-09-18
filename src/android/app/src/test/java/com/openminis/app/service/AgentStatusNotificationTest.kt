@@ -20,4 +20,20 @@ class AgentStatusNotificationTest {
         )
         assertEquals("idle", AgentForegroundService.tickerLine("idle", "idle"))
     }
+
+    @Test
+    fun `ticker prefers overlay reply excerpt over tool status`() {
+        assertEquals(
+            "Hello from Minis",
+            AgentForegroundService.glanceLine("Idle", "Hello from Minis"),
+        )
+        assertEquals(
+            "Task completed · Hello from Minis",
+            AgentForegroundService.tickerLine("Task completed", "Idle", "Hello from Minis"),
+        )
+        assertEquals(
+            "Task completed · Idle",
+            AgentForegroundService.tickerLine("Task completed", "Idle", null),
+        )
+    }
 }

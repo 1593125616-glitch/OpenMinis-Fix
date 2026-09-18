@@ -77,11 +77,21 @@ class AgentForegroundService : Service() {
         internal fun wallClockWhenMs(nowWallMs: Long, elapsedMs: Long): Long =
             nowWallMs - elapsedMs.coerceAtLeast(0L)
 
-        /** Status-bar ticker ("lyrics") line — title plus live tool status. */
-        internal fun tickerLine(title: String, status: String): String {
-            val s = status.trim()
+        /**
+         * Status-bar ticker ("lyrics") line. Prefer the overlay's reply excerpt
+         * so the collapsed shade / Flyme lyrics match the floating capsule.
+         */
+        internal fun tickerLine(title: String, status: String, replyExcerpt: String? = null): String {
+            val s = glanceLine(status, replyExcerpt)
             if (s.isEmpty() || s == title) return title
             return "$title · $s"
+        }
+
+        /** One-line status for ticker / MediaStyle / collapsed text. */
+        internal fun glanceLine(status: String, replyExcerpt: String? = null): String {
+            val reply = replyExcerpt?.trim().orEmpty()
+            if (reply.isNotEmpty()) return reply
+            return status.trim()
         }
 
         /**
@@ -908,8 +918,13 @@ class AgentForegroundService : Service() {
             toolName != null -> toolDisplayLabel(toolName)
             else -> getString(R.string.bg_service_notification_title)
         }
+        val replyExcerpt = SessionActivityTracker.lastReplyExcerpt.value
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         val collapsedText = if (isCompleted) {
-            getString(R.string.bg_service_notification_text_completed, sessionLabel, timeString)
+            replyExcerpt ?: getString(
+                R.string.bg_service_notification_text_completed, sessionLabel, timeString,
+            )
         } else {
             getString(
                 R.string.bg_service_notification_text, sessionLabel, toolStatus, timeString,
@@ -967,14 +982,18 @@ class AgentForegroundService : Service() {
         //   2. setTicker(状态行)            → status-bar "lyrics"
         //   3. MediaSession + MediaStyle    → player card; position ticks locally
         val compactText = if (isCompleted) collapsedText else "$sessionLabel | $toolStatus"
-        val ticker = tickerLine(titleText, toolStatus)
+        val ticker = tickerLine(titleText, toolStatus, replyExcerpt)
         val whenMs = wallClockWhenMs(System.currentTimeMillis(), elapsedMs)
         val session = ensureMediaSession()
         if (session != null) {
+            // Flyme's status-bar now-playing row reads MediaMetadata TITLE.
+            // Put the overlay reply there so 状态栏 matches the floating capsule.
+            val mediaTitle = replyExcerpt ?: titleText
+            val mediaStatus = if (replyExcerpt != null) titleText else toolStatus
             syncAgentMediaSession(
                 session = session,
-                title = titleText,
-                status = toolStatus,
+                title = mediaTitle,
+                status = mediaStatus,
                 elapsedMs = elapsedMs,
                 isCompleted = isCompleted,
             )
