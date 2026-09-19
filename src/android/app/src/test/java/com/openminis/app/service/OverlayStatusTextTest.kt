@@ -49,7 +49,7 @@ class OverlayStatusTextTest {
     fun `marquee lyric is a single copy padded for one-line RTL scroll`() {
         val lyric = OverlayStatusText.marqueeLyric("Open Baidu")
         assertTrue(lyric.startsWith("Open Baidu"))
-        assertTrue(lyric.length >= OverlayStatusText.STATUS_BAR_MIN)
+        assertEquals(OverlayStatusText.STATUS_BAR_MIN, lyric.length)
         assertEquals(1, Regex.fromLiteral("Open Baidu").findAll(lyric).count())
         assertTrue(!lyric.contains("Open Baidu          Open Baidu"))
         assertTrue(!OverlayStatusText.shouldReplaceLyric(lyric, lyric))
@@ -62,7 +62,7 @@ class OverlayStatusTextTest {
         val lyric = OverlayStatusText.marqueeLyric(core)
         assertEquals(1, Regex.fromLiteral(core).findAll(lyric).count())
         assertTrue(lyric.startsWith(core))
-        assertTrue(lyric.length <= OverlayStatusText.STATUS_BAR_MAX)
+        assertEquals(OverlayStatusText.STATUS_BAR_MIN, lyric.length)
         assertTrue('\n' !in lyric)
     }
 }

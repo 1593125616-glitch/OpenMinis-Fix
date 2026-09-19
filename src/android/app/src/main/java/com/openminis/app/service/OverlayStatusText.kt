@@ -57,11 +57,11 @@ object OverlayStatusText {
      * the same snippet (or publishing it on all three keys) stacked three
      * identical rows that then popped vertically instead of marqueeing.
      *
-     * Keep a single copy, cap it to one chip, and pad with ideographic
-     * spaces so a short tool title is wider than the chip and the ROM can
-     * RTL-scroll that one copy.
+     * Keep a single copy of the readable text, then pad with ideographic
+     * spaces past a full status-bar width so the ROM RTL-scrolls that one
+     * copy instead of wrapping extra copies onto new rows.
      */
-    const val STATUS_BAR_MIN = 28
+    const val STATUS_BAR_MIN = 72
     const val STATUS_BAR_MAX = 36
 
     fun marqueeLyric(text: String, minWidth: Int = STATUS_BAR_MIN): String {
