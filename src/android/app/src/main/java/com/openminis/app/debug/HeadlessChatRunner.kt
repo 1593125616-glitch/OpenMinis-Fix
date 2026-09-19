@@ -180,7 +180,7 @@ internal object HeadlessChatRunner {
         wait: Boolean,
         timeoutMs: Long,
     ): PromptResult {
-        com.openminis.app.agent.HeadlessGuard.enter()
+        com.openminis.app.agent.HeadlessGuard.enter(sessionId)
         var retain = false
         try {
             return withContext(Dispatchers.Main) {
@@ -241,7 +241,7 @@ internal object HeadlessChatRunner {
         vm.sendMessage(text)
         if (!wait) {
             retain = true
-            retainHeadlessUntilIdle(vm)
+            retainHeadlessUntilIdle(vm, sessionId)
             return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
         }
 
@@ -276,17 +276,17 @@ internal object HeadlessChatRunner {
         )
             }
         } finally {
-            if (!retain) com.openminis.app.agent.HeadlessGuard.leave()
+            if (!retain) com.openminis.app.agent.HeadlessGuard.leave(sessionId)
         }
     }
 
-    private fun retainHeadlessUntilIdle(vm: ChatViewModel) {
+    private fun retainHeadlessUntilIdle(vm: ChatViewModel, sessionId: String) {
         vm.viewModelScope.launch {
             try {
                 withTimeoutOrNull(2_000L) { vm.isStreaming.first { it } }
                 if (vm.isStreaming.value) vm.isStreaming.first { !it }
             } finally {
-                com.openminis.app.agent.HeadlessGuard.leave()
+                com.openminis.app.agent.HeadlessGuard.leave(sessionId)
             }
         }
     }
@@ -297,7 +297,7 @@ internal object HeadlessChatRunner {
         messageId: String?,
         wait: Boolean,
         timeoutMs: Long,
-    ): PromptResult = com.openminis.app.agent.HeadlessGuard.withHeadless {
+    ): PromptResult = com.openminis.app.agent.HeadlessGuard.withHeadless(sessionId) {
         withContext(Dispatchers.Main) {
         val app = app(context)
         val vm = viewModel(context, sessionId)
@@ -331,8 +331,8 @@ internal object HeadlessChatRunner {
         }
         vm.retryFromMessage(targetMsgId)
         if (!wait) {
-            com.openminis.app.agent.HeadlessGuard.enter()
-            retainHeadlessUntilIdle(vm)
+            com.openminis.app.agent.HeadlessGuard.enter(sessionId)
+            retainHeadlessUntilIdle(vm, sessionId)
             return@withContext PromptResult(
                 status = "Retrying",
                 responseText = null,

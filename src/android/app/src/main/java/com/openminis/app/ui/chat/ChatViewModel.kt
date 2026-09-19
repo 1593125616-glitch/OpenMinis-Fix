@@ -9552,7 +9552,7 @@ class ChatViewModel(
         )
         if (!allowed) {
             return ToolExecutionResult(
-                com.openminis.app.agent.AgentToolGate.denyMessage(name, mode),
+                com.openminis.app.agent.AgentToolGate.denyMessage(name, mode, activeSessionId),
                 false,
                 toolTitle = toolTitle,
             )

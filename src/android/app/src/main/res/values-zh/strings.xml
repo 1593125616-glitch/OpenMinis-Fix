@@ -761,6 +761,13 @@
     <string name="perm_section_privacy">隐私</string>
     <string name="perm_section_media">媒体</string>
     <string name="perm_section_system">系统</string>
+    <string name="perm_section_agent_tools">Agent 工具</string>
+    <string name="perm_section_agent_tools_footer">Shell、写文件、浏览器、电脑操控。定时任务 / Telegram 无法弹出确认框，需要设为自动允许。</string>
+    <string name="perm_tool_shell">Shell</string>
+    <string name="perm_tool_file_write">写文件</string>
+    <string name="perm_tool_file_edit">编辑文件</string>
+    <string name="perm_tool_browser">浏览器</string>
+    <string name="perm_tool_desktop">电脑操控</string>
     <string name="perm_tool_calendar">日历</string>
     <string name="perm_tool_location">位置</string>
     <string name="perm_tool_clipboard">剪贴板</string>

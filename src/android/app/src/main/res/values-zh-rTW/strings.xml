@@ -722,6 +722,13 @@
     <string name="perm_section_privacy">隱私</string>
     <string name="perm_section_media">媒體</string>
     <string name="perm_section_system">系統</string>
+    <string name="perm_section_agent_tools">Agent 工具</string>
+    <string name="perm_section_agent_tools_footer">Shell、寫入檔案、瀏覽器、電腦操控。排程任務 / Telegram 無法跳出確認框，需設為自動允許。</string>
+    <string name="perm_tool_shell">Shell</string>
+    <string name="perm_tool_file_write">寫入檔案</string>
+    <string name="perm_tool_file_edit">編輯檔案</string>
+    <string name="perm_tool_browser">瀏覽器</string>
+    <string name="perm_tool_desktop">電腦操控</string>
     <string name="perm_tool_calendar">行事曆</string>
     <string name="perm_tool_location">位置</string>
     <string name="perm_tool_clipboard">剪貼簿</string>

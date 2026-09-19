@@ -216,6 +216,22 @@ fun OffloadPermissionScreen(
             onStatusRowClick = onOpenPrivilegedBackend,
         )
 
+        val agentTools = OffloadPermissionManager.toolRegistry.filter {
+            it.category == OffloadPermissionManager.PermissionCategory.INTEGRATIONS &&
+                it.toolName !in setOf("a11y_cli", "shizuku_cli") &&
+                it.showInSettings
+        }
+        if (agentTools.isNotEmpty()) {
+            SettingsSection(
+                header = stringResource(R.string.perm_section_agent_tools),
+                footer = stringResource(R.string.perm_section_agent_tools_footer),
+            ) {
+                agentTools.forEachIndexed { idx, tool ->
+                    PermissionRow(tool = tool, showDivider = idx < agentTools.size - 1)
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
     }
 
@@ -458,6 +474,11 @@ private fun toolTitleRes(toolName: String): Int = when (toolName) {
     "photos" -> R.string.perm_tool_photos
     "a11y_cli" -> R.string.perm_tool_a11y_cli
     "shizuku_cli" -> R.string.perm_tool_shizuku_cli
+        "shell_execute" -> R.string.perm_tool_shell
+        "file_write" -> R.string.perm_tool_file_write
+        "file_edit" -> R.string.perm_tool_file_edit
+        "browser_use" -> R.string.perm_tool_browser
+        "desktop_run" -> R.string.perm_tool_desktop
     else -> 0
 }
 

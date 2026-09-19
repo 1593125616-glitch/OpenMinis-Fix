@@ -840,6 +840,13 @@
     <string name="perm_section_privacy">Privacy</string>
     <string name="perm_section_media">Media</string>
     <string name="perm_section_system">System</string>
+    <string name="perm_section_agent_tools">Agent tools</string>
+    <string name="perm_section_agent_tools_footer">Shell, files, browser, and desktop. Scheduled / Telegram tasks cannot show an Ask dialog — set Auto-allow for those tools.</string>
+    <string name="perm_tool_shell">Shell</string>
+    <string name="perm_tool_file_write">Write files</string>
+    <string name="perm_tool_file_edit">Edit files</string>
+    <string name="perm_tool_browser">Browser</string>
+    <string name="perm_tool_desktop">Desktop hands</string>
     <string name="perm_tool_calendar">Calendar</string>
     <string name="perm_tool_location">Location</string>
     <string name="perm_tool_clipboard">Clipboard</string>
