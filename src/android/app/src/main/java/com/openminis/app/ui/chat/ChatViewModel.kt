@@ -1236,7 +1236,8 @@ class ChatViewModel(
      * fixed list of definition objects, no I/O.
      */
     private val agentTools: List<AgentToolDefinition>
-        get() = AgentTools.makeAgentTools(
+        get() = com.openminis.app.agent.AgentLoopPolicy.filter(
+            AgentTools.makeAgentTools(
             // [T-android-vision-group / GH#182] The main model's own vision
             // capability. When false but a Vision Group is configured, read_image
             // is still exposed and routes through the group (see
@@ -1250,6 +1251,10 @@ class ChatViewModel(
                 providerRepository, context,
             ),
             memoryEnabled = _memoryEnabled.value,
+            desktopConfigured = com.openminis.app.channel.ChannelPrefs(context)
+                .desktopBaseUrl().isNotBlank(),
+        ),
+            com.openminis.app.agent.AgentModeStore.current(),
         )
 
     /**
@@ -6808,6 +6813,43 @@ class ChatViewModel(
      *   - Sync the DB: if we popped a trailing assistant, drop just its
      *     persisted row so a re-load doesn't resurrect the failed turn.
      */
+    fun setAgentMode(mode: com.openminis.app.agent.AgentMode) {
+        com.openminis.app.agent.AgentModeStore.set(context, mode)
+    }
+
+    val agentMode: kotlinx.coroutines.flow.StateFlow<com.openminis.app.agent.AgentMode>
+        get() = com.openminis.app.agent.AgentModeStore.mode
+
+    fun undoLastTurn() {
+        if (_isStreaming.value) return
+        val msgs = _messages.value
+        val mapped = msgs.map {
+            com.openminis.app.data.SessionUndo.Msg(role = it.role, isToolResult = false)
+        }
+        val cut = com.openminis.app.data.SessionUndo.undoLastTurn(mapped) ?: return
+        val dropped = msgs.drop(cut.keepCount)
+        _messages.value = msgs.take(cut.keepCount)
+        val lastUserHist = agentHistory.indexOfLast { m ->
+            m.role == com.openminis.app.data.model.LLMMessage.Role.USER &&
+                m.contentParts.none { it is com.openminis.app.data.model.AgentContentPart.ToolResult }
+        }
+        if (lastUserHist >= 0) {
+            while (agentHistory.size > lastUserHist) {
+                agentHistory.removeAt(agentHistory.lastIndex)
+            }
+        }
+        val droppedIds = dropped.flatMap { msg ->
+            msg.sourceDbIds.ifEmpty { listOf(msg.id) }
+        }.toSet()
+        val sid = realSessionId.ifEmpty { sessionId }
+        if (sid.isEmpty() || droppedIds.isEmpty()) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                chatRepository.deleteMessagesByIds(sid, droppedIds)
+            }
+        }
+    }
+
     fun retryLast() {
         if (_isStreaming.value) return
         // T-streaming-side-channel: belt-and-suspenders flush in case any
@@ -8528,6 +8570,16 @@ class ChatViewModel(
                 } catch (e: Exception) {
                     if (e is CancellationException && e.cause == null) throw e  // real job cancellation
                     val actual = unwrapFlowException(e)
+                    if (actual is com.openminis.app.data.model.LLMError.InvalidApiKey ||
+                        actual is com.openminis.app.data.model.LLMError.RateLimited
+                    ) {
+                        val instanceId = _activeEntryId.value?.let { id ->
+                            providerRepository.entryById(id)?.providerInstanceId
+                        }
+                        if (instanceId != null) {
+                            com.openminis.app.agent.KeyPool.markLastFailed(instanceId)
+                        }
+                    }
                     val isRateLimit = actual is com.openminis.app.data.model.LLMError.RateLimited
                     val is5xx = actual is com.openminis.app.data.model.LLMError.ProviderError &&
                         actual.detail.contains(Regex("[5][0-9]{2}"))
@@ -9443,6 +9495,36 @@ class ChatViewModel(
         tools: List<AgentToolDefinition>,
     ): String? = preflightValidateToolCallImpl(name, args, tools)
 
+    private suspend fun executeSubagentTool(argsJson: String): ToolExecutionResult {
+        val prompt = com.openminis.app.tools.SubagentTool.parsePrompt(argsJson)
+        if (prompt.isBlank()) return ToolExecutionResult("Error: prompt is required", false)
+        if (com.openminis.app.tools.SubagentTool.inChild()) {
+            return ToolExecutionResult("Error: nested subagent is not allowed", false)
+        }
+        com.openminis.app.tools.SubagentTool.enter()
+        try {
+            val prefs = com.openminis.app.channel.ChannelPrefs(context)
+            val parent = realSessionId.ifEmpty { sessionId }.ifEmpty { "unknown" }
+            val id = com.openminis.app.debug.HeadlessChatRunner.ensureBoundSession(
+                context, prefs, "subagent:$parent", "subagent",
+            )
+            val result = com.openminis.app.debug.HeadlessChatRunner.prompt(
+                context = context,
+                sessionId = id,
+                text = "New isolated research task. Ignore earlier turns in this session. " +
+                    "Read-only: do not write files or run shell.\n\n" + prompt,
+                wait = true,
+                timeoutMs = 3 * 60 * 1000L,
+            )
+            return ToolExecutionResult(
+                result.responseText?.ifBlank { "(empty subagent reply)" } ?: result.status,
+                result.status != "Error",
+            )
+        } finally {
+            com.openminis.app.tools.SubagentTool.leave()
+        }
+    }
+
     private suspend fun executeTool(
         name: String,
         argsJson: String,
@@ -9460,6 +9542,21 @@ class ChatViewModel(
         // — they always fall through to shell_execute or the offload
         // bridge, which is now where checkPermission runs.
         val toolTitle = try { JSONObject(argsJson).optString("tool_title", name) } catch (_: Exception) { name }
+
+        val mode = com.openminis.app.agent.AgentModeStore.current()
+        val allowed = com.openminis.app.agent.AgentToolGate.allow(
+            toolName = name,
+            toolTitle = toolTitle,
+            sessionId = activeSessionId,
+            mode = mode,
+        )
+        if (!allowed) {
+            return ToolExecutionResult(
+                com.openminis.app.agent.AgentToolGate.denyMessage(name, mode),
+                false,
+                toolTitle = toolTitle,
+            )
+        }
 
         return when (name) {
             FileReadTool.NAME -> {
@@ -9494,6 +9591,14 @@ class ChatViewModel(
             "browser_use" -> executeBrowserUseTool(argsJson)
             "memory_write" -> executeMemoryWriteTool(argsJson)
             "memory_get" -> executeMemoryGetTool(argsJson)
+            com.openminis.app.tools.SubagentTool.NAME -> executeSubagentTool(argsJson)
+            com.openminis.app.tools.CanvasTool.NAME -> com.openminis.app.tools.CanvasTool.execute(argsJson)
+            com.openminis.app.tools.DesktopRunTool.NAME -> {
+                val ch = com.openminis.app.channel.ChannelPrefs(context)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.openminis.app.tools.DesktopRunTool.execute(argsJson, ch.desktopBaseUrl(), ch.desktopToken())
+                }
+            }
             else -> ToolExecutionResult("Unknown tool: $name", false)
         }
     }
@@ -10545,7 +10650,7 @@ Interactive terminal: minis://open_terminal opens a terminal for tasks that requ
 Environment variables:
 - Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. ${'$'}API_KEY) inside scripts or commands — never inline the literal value.
 - When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) — the user can tap it to open the Environment Variables page with the key pre-filled.
-- Settings deep links: when you tell the user "go to Settings → X" or want to point them at a specific setting, prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), skills, memory, storage, shared-folders (Shared Folders: /var/minis/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the minis:// section above: only /var/minis resource URLs may go to browser_use).
+- Settings deep links: when you tell the user "go to Settings → X" or want to point them at a specific setting, prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), skills, memory, storage, shared-folders (Shared Folders: /var/minis/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors), channels (Telegram gateway). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the minis:// section above: only /var/minis resource URLs may go to browser_use).
 - To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.${memorySystemSection}
 
 Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For recurring tasks that must fire while the app is backgrounded, use the native alarm tool (AlarmManager) or tell the user to set up a system-level schedule (Google Calendar event, Tasker automation, etc.). (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.) For long jobs inside a turn, use shell_execute detach=true + task_output — do not use nohup python; PersistentShell is a pipe, so CPython buffers and looks dead while `nohup sh` prints immediately."""
@@ -11563,7 +11668,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         // path so both prefer the same sub-model. Silently degrades (caller
         // falls back to the primary provider) when no sub-group is configured or
         // every member sits behind a disabled provider.
-        val entry = providerRepository.resolveTitleSubEntry() ?: return null
+        val roleId = com.openminis.app.agent.AgentRoleModels.getEntryId(context, com.openminis.app.agent.AgentRoleModels.ROLE_TITLE)
+        val entry = roleId.takeIf { it.isNotBlank() }?.let { providerRepository.entryById(it) }
+            ?: providerRepository.resolveTitleSubEntry()
+            ?: return null
         val instance = providerRepository.instance(entry.providerInstanceId) ?: return null
         // [T-android-keyless-provider-selection] usableApiKey — a keyless
         // self-hosted sub-model is usable; loadApiKey returned null and made

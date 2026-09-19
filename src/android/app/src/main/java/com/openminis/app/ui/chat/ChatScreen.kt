@@ -2953,6 +2953,30 @@ fun ChatScreen(
                                     Icon(Icons.Default.Terminal, contentDescription = null)
                                 },
                             )
+                            val agentMode by viewModel.agentMode.collectAsState()
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (agentMode == com.openminis.app.agent.AgentMode.PLAN)
+                                            stringResource(R.string.chat_menu_switch_agent)
+                                        else stringResource(R.string.chat_menu_switch_plan),
+                                    )
+                                },
+                                onClick = {
+                                    showChatMenu = false
+                                    val next = if (agentMode == com.openminis.app.agent.AgentMode.PLAN)
+                                        com.openminis.app.agent.AgentMode.AGENT
+                                    else com.openminis.app.agent.AgentMode.PLAN
+                                    viewModel.setAgentMode(next)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_menu_undo_turn)) },
+                                onClick = {
+                                    showChatMenu = false
+                                    viewModel.undoLastTurn()
+                                },
+                            )
                             // Open Browser (iOS parity)
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_menu_open_browser)) },

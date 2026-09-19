@@ -154,7 +154,10 @@ class SessionForkManager(
                 chatRepository.dao.insertCompactMarker(copy)
                 copied++
             }
-            AppLogger.info(TAG, "duplicateSession: copied $copied/${markers.size} compact marker(s) to ${new.id}")
+            AppLogger.info(
+                TAG,
+                "duplicateSession: copied $copied/${markers.size} compact marker(s) to ${new.id}",
+            )
         }
 
         AppLogger.info(
@@ -164,6 +167,19 @@ class SessionForkManager(
                 "memoryEnabled=${source.memoryEnabled})",
         )
         return new.id
+    }
+
+    /**
+     * Duplicate then drop messages after [keepCount] sort slots — a branch
+     * from an earlier turn.
+     */
+    suspend fun forkPrefix(sessionId: String, keepCount: Int): String? {
+        val newId = duplicateSession(sessionId) ?: return null
+        if (keepCount >= 0) {
+            chatRepository.deleteMessagesAfter(newId, keepCount)
+        }
+        AppLogger.info(TAG, "forkPrefix keep=$keepCount from $sessionId -> $newId")
+        return newId
     }
 
     /**

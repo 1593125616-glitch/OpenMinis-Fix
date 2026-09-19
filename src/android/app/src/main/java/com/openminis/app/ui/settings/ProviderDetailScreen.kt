@@ -226,6 +226,28 @@ fun ProviderDetailScreen(
             }
         }
 
+        if (!isOAuthProvider) {
+            var extraKeys by remember { mutableStateOf(providerRepository.extraApiKeysRaw(instanceId)) }
+            SettingsSection(
+                header = stringResource(R.string.provider_extra_keys),
+                footer = stringResource(R.string.provider_extra_keys_footer),
+            ) {
+                SettingsCardBlock {
+                    SectionTextField(
+                        value = extraKeys,
+                        onValueChange = { extraKeys = it },
+                        placeholder = stringResource(R.string.provider_extra_keys),
+                        singleLine = false,
+                    )
+                    MinisOutlinedButton(
+                        onClick = { providerRepository.saveExtraApiKeys(instanceId, extraKeys) },
+                    ) {
+                        Text(stringResource(R.string.provider_save_extra_keys))
+                    }
+                }
+            }
+        }
+
         // Manual Bearer Token (OAuth providers only — proxy override)
         if (isOAuthProvider) {
             SettingsSection(

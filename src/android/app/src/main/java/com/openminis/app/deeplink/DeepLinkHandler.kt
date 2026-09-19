@@ -174,6 +174,8 @@ object DeepLinkHandler {
                 else DeepLinkAction.OpenSettingsScreen(Routes.MODEL_GROUPS)
             "usage", "usage-stats", "usage_stats" ->
                 DeepLinkAction.OpenSettingsScreen(Routes.USAGE_STATS)
+            "channels", "telegram", "channel" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.CHANNELS)
             "skills" -> DeepLinkAction.OpenSettingsScreen(Routes.SKILLS)
             "memory" -> DeepLinkAction.OpenSettingsScreen(Routes.MEMORY)
             "storage" -> DeepLinkAction.OpenSettingsScreen(Routes.STORAGE)

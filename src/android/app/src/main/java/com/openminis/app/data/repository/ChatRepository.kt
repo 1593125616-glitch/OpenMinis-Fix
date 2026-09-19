@@ -314,6 +314,11 @@ class ChatRepository(internal val dao: ChatDao) {
     suspend fun deleteMessagesAfter(sessionId: String, keepCount: Int) =
         dao.deleteMessagesAfter(sessionId, keepCount)
 
+    suspend fun deleteMessagesByIds(sessionId: String, ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        dao.deleteMessagesByIds(sessionId, ids.toList())
+    }
+
     /**
      * Rewrite a single message row's parts_json in place. Used by
      * [com.openminis.app.ui.chat.ChatViewModel.rerunFromToolBlock]'s block-

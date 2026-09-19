@@ -82,16 +82,26 @@ class AgentForegroundService : Service() {
          * so the collapsed shade / Flyme lyrics match the floating capsule.
          */
         internal fun tickerLine(title: String, status: String, replyExcerpt: String? = null): String {
-            val s = glanceLine(status, replyExcerpt)
-            if (s.isEmpty() || s == title) return title
-            return "$title · $s"
+            return OverlayStatusText.glance(
+                isRunning = replyExcerpt.isNullOrBlank(),
+                toolTitle = null,
+                toolName = null,
+                status = status,
+                replyExcerpt = replyExcerpt,
+                fallback = title,
+            )
         }
 
         /** One-line status for ticker / MediaStyle / collapsed text. */
         internal fun glanceLine(status: String, replyExcerpt: String? = null): String {
-            val reply = replyExcerpt?.trim().orEmpty()
-            if (reply.isNotEmpty()) return reply
-            return status.trim()
+            return OverlayStatusText.glance(
+                isRunning = replyExcerpt.isNullOrBlank(),
+                toolTitle = null,
+                toolName = null,
+                status = status,
+                replyExcerpt = replyExcerpt,
+                fallback = status,
+            )
         }
 
         /**
@@ -126,6 +136,9 @@ class AgentForegroundService : Service() {
      * clock locally (same trick as a music app). No audio is played.
      */
     private var mediaSession: android.support.v4.media.session.MediaSessionCompat? = null
+    private var lastPostedAppForeground: Boolean? = null
+    private var lastMediaLyric: String? = null
+    private var lastMediaArtist: String? = null
     /**
      * Partial wake lock acquired while the foreground service is alive.
      * Required because Android can put the CPU to sleep even with a
@@ -408,6 +421,20 @@ class AgentForegroundService : Service() {
      * backgrounded. Foreground transitions always hide instantly so the
      * overlay doesn't draw on top of the chat itself.
      */
+    /**
+     * Flyme lyrics / promoted chip must hide the moment the user opens the
+     * chat, same as the floating capsule. Rebuild the FGS notification on
+     * foreground edges only — tool-status ticks already go through updateService.
+     */
+    private fun maybeRefreshStatusBar(isForeground: Boolean) {
+        if (lastPostedAppForeground == isForeground) return
+        lastPostedAppForeground = isForeground
+        val trackerBusy = SessionActivityTracker.activeSessions.value.isNotEmpty() ||
+            SessionActivityTracker.presentSessions.value.isNotEmpty()
+        if (!trackerBusy) return
+        refreshOngoingNotification()
+    }
+
     private fun startOverlayObserver() {
         val app = applicationContext as? MinisApp ?: return
         overlayController = ToolOverlayController(applicationContext).apply {
@@ -423,6 +450,7 @@ class AgentForegroundService : Service() {
             onDismissByUser = {
                 hasCompletionPending = false
                 SessionActivityTracker.dismissOverlay()
+                refreshOngoingNotification()
             }
         }
         val backgroundRepo = app.backgroundSettingsRepository
@@ -467,7 +495,10 @@ class AgentForegroundService : Service() {
                     hasActiveStream = activeSessions.isNotEmpty(),
                     dynamicIslandEnabled = values[14] as Boolean,
                 )
-            }.distinctUntilChanged().collect { state -> applyOverlayState(state) }
+            }.distinctUntilChanged().collect { state ->
+                maybeRefreshStatusBar(state.isForeground)
+                applyOverlayState(state)
+            }
         }
     }
 
@@ -552,6 +583,7 @@ class AgentForegroundService : Service() {
             hasPerm && !state.cameraSuppress
         ) {
             hasCompletionPending = true
+            refreshOngoingNotification()
         }
         wasBusy = isBusy
         val shouldShow = state.enabled && hasPerm && !state.isForeground &&
@@ -737,22 +769,33 @@ class AgentForegroundService : Service() {
         status: String,
         elapsedMs: Long,
         isCompleted: Boolean,
+        broadcast: Boolean,
     ) {
-        val meta = android.support.v4.media.MediaMetadataCompat.Builder()
-            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, title)
-            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, status)
-            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, status)
-            .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, status)
-        if (isCompleted) {
-            meta.putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, elapsedMs)
+        val lyric = OverlayStatusText.marqueeLyric(title)
+        // Replacing TITLE restarts Flyme's RTL marquee. Same lyric stays.
+        if (broadcast && OverlayStatusText.shouldReplaceLyric(lastMediaLyric, lyric)) {
+            lastMediaLyric = lyric
+            lastMediaArtist = status
+            val meta = android.support.v4.media.MediaMetadataCompat.Builder()
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, lyric)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, lyric)
+                .putString("lyric", lyric)
+                .putString("android.media.metadata.LYRICS", lyric)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, status)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, status)
+                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, status)
+            if (isCompleted) {
+                meta.putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, elapsedMs)
+            }
+            session.setMetadata(meta.build())
         }
-        session.setMetadata(meta.build())
-        val state = if (isCompleted) {
-            android.support.v4.media.session.PlaybackStateCompat.STATE_PAUSED
-        } else {
+        val playing = broadcast && !isCompleted
+        val state = if (playing) {
             android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING
+        } else {
+            android.support.v4.media.session.PlaybackStateCompat.STATE_PAUSED
         }
-        val speed = if (isCompleted) 0f else 1.0f
+        val speed = if (playing) 1.0f else 0f
         session.setPlaybackState(
             android.support.v4.media.session.PlaybackStateCompat.Builder()
                 .setActions(
@@ -762,7 +805,7 @@ class AgentForegroundService : Service() {
                 .setState(state, elapsedMs, speed, SystemClock.elapsedRealtime())
                 .build(),
         )
-        session.isActive = !isCompleted
+        session.isActive = broadcast
     }
 
     private fun releaseMediaSession() {
@@ -773,6 +816,8 @@ class AgentForegroundService : Service() {
             Log.w(TAG, "MediaSession release failed: ${t.message}")
         } finally {
             mediaSession = null
+            lastMediaLyric = null
+            lastMediaArtist = null
         }
     }
 
@@ -958,11 +1003,27 @@ class AgentForegroundService : Service() {
         val minisApp = (applicationContext as? MinisApp)?.takeIf { it.subsystemsReady() }
         val dynamicIslandUserEnabled =
             minisApp?.backgroundSettingsRepository?.dynamicIslandEnabled?.value == true
+        val isAppForeground = minisApp?.isAppForegroundFlow?.value == true
+        val isBusy = SessionActivityTracker.activeSessions.value.isNotEmpty() || isToolRunning
+        val showStatusBarProgress = !isAppForeground && (isBusy || hasCompletionPending)
+        val toolTitle = SessionActivityTracker.currentToolTitle.value
+            ?: SessionActivityTracker.lastToolTitle.value
+        val glance = OverlayStatusText.glance(
+            isRunning = isBusy,
+            toolTitle = toolTitle,
+            toolName = toolName ?: SessionActivityTracker.lastToolName.value,
+            status = toolStatus,
+            replyExcerpt = if (!isBusy) replyExcerpt else null,
+            fallback = titleText,
+        )
         val dynamicIslandOn = DynamicIslandSupport.isDynamicIslandActive(
             this,
             dynamicIslandUserEnabled,
         )
-        if (dynamicIslandOn && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+        if (showStatusBarProgress && dynamicIslandOn &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
+        ) {
+            mediaSession?.isActive = false
             return buildPromotedNotification(
                 titleText = titleText,
                 collapsedText = collapsedText,
@@ -982,21 +1043,24 @@ class AgentForegroundService : Service() {
         //   2. setTicker(状态行)            → status-bar "lyrics"
         //   3. MediaSession + MediaStyle    → player card; position ticks locally
         val compactText = if (isCompleted) collapsedText else "$sessionLabel | $toolStatus"
-        val ticker = tickerLine(titleText, toolStatus, replyExcerpt)
+        val ticker = if (showStatusBarProgress) OverlayStatusText.marqueeLyric(glance) else titleText
         val whenMs = wallClockWhenMs(System.currentTimeMillis(), elapsedMs)
         val session = ensureMediaSession()
         if (session != null) {
             // Flyme's status-bar now-playing row reads MediaMetadata TITLE.
-            // Put the overlay reply there so 状态栏 matches the floating capsule.
-            val mediaTitle = replyExcerpt ?: titleText
-            val mediaStatus = if (replyExcerpt != null) titleText else toolStatus
+            // Same current snippet as the floating capsule — never the whole turn.
             syncAgentMediaSession(
                 session = session,
-                title = mediaTitle,
-                status = mediaStatus,
+                title = glance,
+                status = titleText,
                 elapsedMs = elapsedMs,
                 isCompleted = isCompleted,
+                broadcast = showStatusBarProgress,
             )
+            if (!showStatusBarProgress) {
+                lastMediaLyric = null
+                lastMediaArtist = null
+            }
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -1013,7 +1077,7 @@ class AgentForegroundService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(
-                if (session != null) NotificationCompat.CATEGORY_TRANSPORT
+                if (session != null && showStatusBarProgress) NotificationCompat.CATEGORY_TRANSPORT
                 else NotificationCompat.CATEGORY_SERVICE,
             )
 
@@ -1025,7 +1089,7 @@ class AgentForegroundService : Service() {
             )
         }
 
-        if (session != null) {
+        if (session != null && showStatusBarProgress) {
             val mediaStyle = androidx.media.app.NotificationCompat.MediaStyle()
                 .setMediaSession(session.sessionToken)
                 .setShowCancelButton(true)

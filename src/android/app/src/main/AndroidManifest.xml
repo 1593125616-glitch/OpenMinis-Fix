@@ -460,6 +460,14 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Telegram long-poll. Same mediaPlayback type as AgentForegroundService
+             to escape the Android 14+ dataSync 6h cap. Sideload-only. -->
+        <service
+            android:name=".channel.ChannelService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false" />
+
         <!-- Alarm broadcast receiver (also handles BOOT_COMPLETED for re-scheduling) -->
         <receiver
             android:name=".offload.AlarmReceiver"

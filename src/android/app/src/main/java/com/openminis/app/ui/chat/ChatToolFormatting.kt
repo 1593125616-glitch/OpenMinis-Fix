@@ -104,6 +104,9 @@ internal fun toolTitleLabel(toolName: String): String = when (toolName) {
     "read_image" -> "Minis is reading Image"
     "memory_write", "memory_get" -> "Minis is using Memory"
     "web_search" -> "Minis is using Search"
+    "subagent" -> "Minis is using Subagent"
+    "canvas" -> "Minis is using Canvas"
+    "desktop_run" -> "Minis is using Desktop"
     else -> "Minis is using ${toolDisplayName(toolName)}"
 }
 

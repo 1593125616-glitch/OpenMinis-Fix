@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Feedback
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Folder
@@ -85,6 +86,7 @@ fun SettingsScreen(
     // [T-mcp-integration-android] MCP Integrations page, listed directly below
     // Memory. Default no-op for callers that haven't wired the route yet.
     onMcpClick: () -> Unit = {},
+    onChannelsClick: () -> Unit = {},
     // [T-soul-md] Soul settings page lives between Skills and Memory in the
     // Agent Runtime section; default no-op for callers that haven't wired
     // the route yet.
@@ -213,6 +215,17 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_env_vars),
                     subtitle = stringResource(R.string.settings_env_vars_subtitle),
                     onClick = onEnvVarsClick,
+                    showDivider = false,
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_channels)) {
+                SettingsItem(
+                    icon = Icons.Outlined.Forum,
+                    iconColor = Color(0xFF0088CC),
+                    title = stringResource(R.string.settings_channels),
+                    subtitle = stringResource(R.string.settings_channels_subtitle),
+                    onClick = onChannelsClick,
                     showDivider = false,
                 )
             }

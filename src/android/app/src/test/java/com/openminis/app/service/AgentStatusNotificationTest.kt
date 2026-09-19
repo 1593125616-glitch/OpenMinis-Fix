@@ -12,11 +12,14 @@ class AgentStatusNotificationTest {
     }
 
     @Test
-    fun `ticker joins title and live status`() {
-        assertEquals("Minis is using Shell", AgentForegroundService.tickerLine("Minis is using Shell", ""))
+    fun `ticker is current snippet not title plus history`() {
         assertEquals(
-            "Minis is using Shell · ls -la",
+            "ls -la",
             AgentForegroundService.tickerLine("Minis is using Shell", "ls -la"),
+        )
+        assertEquals(
+            "Minis is using Shell",
+            AgentForegroundService.tickerLine("Minis is using Shell", ""),
         )
         assertEquals("idle", AgentForegroundService.tickerLine("idle", "idle"))
     }
@@ -28,11 +31,11 @@ class AgentStatusNotificationTest {
             AgentForegroundService.glanceLine("Idle", "Hello from Minis"),
         )
         assertEquals(
-            "Task completed · Hello from Minis",
+            "Hello from Minis",
             AgentForegroundService.tickerLine("Task completed", "Idle", "Hello from Minis"),
         )
         assertEquals(
-            "Task completed · Idle",
+            "Task completed",
             AgentForegroundService.tickerLine("Task completed", "Idle", null),
         )
     }

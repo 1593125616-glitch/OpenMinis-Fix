@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandMore
@@ -27,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -34,10 +37,14 @@ import com.openminis.app.data.db.ChatDao
 import com.openminis.app.data.model.LLMModel
 import com.openminis.app.data.model.ProviderConfig
 import com.openminis.app.data.model.ProviderType
-import org.json.JSONObject
+import com.openminis.app.usage.TokenTotals
+import com.openminis.app.usage.UsagePeriod
+import com.openminis.app.usage.UsageRange
+import com.openminis.app.usage.UsageSnapshot
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * [T-token-attribution-snapshot] How trustworthy a row's model attribution is.
@@ -152,6 +159,7 @@ fun UsageStatsScreen(
 ) {
     var grandTotal by remember { mutableStateOf(GrandTotal()) }
     var providerGroups by remember { mutableStateOf<List<ProviderGroup>>(emptyList()) }
+    var snapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
     var isLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -171,13 +179,15 @@ fun UsageStatsScreen(
 
         val statsMap = mutableMapOf<String, ModelStats>()
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val periodRows = mutableListOf<Pair<Long, TokenTotals>>()
 
         for (record in records) {
-            val usage = try { JSONObject(record.tokenUsage) } catch (_: Exception) { continue }
-            val input = usage.optLong("inputTokens", 0)
-            val output = usage.optLong("outputTokens", 0)
-            val cacheCr = usage.optLong("cacheCreationTokens", usage.optLong("cacheCreationInputTokens", 0))
-            val cacheRd = usage.optLong("cacheReadTokens", usage.optLong("cacheReadInputTokens", 0))
+            val totals = UsagePeriod.parseJson(record.tokenUsage) ?: continue
+            val input = totals.inputTokens
+            val output = totals.outputTokens
+            val cacheCr = totals.cacheCreationTokens
+            val cacheRd = totals.cacheReadTokens
+            periodRows += record.createdAt to totals
 
             // [T-android-usage-orphan-rows] GH#168: modelId is null for a
             // message whose session row is gone (LEFT JOIN). Those tokens were
@@ -236,11 +246,56 @@ fun UsageStatsScreen(
         )
 
         providerGroups = sortedGroups
+        snapshot = UsagePeriod.buildSnapshot(
+            periodRows,
+            System.currentTimeMillis(),
+            TimeZone.getDefault(),
+        )
         isLoaded = true
     }
 
     SettingsScaffold(title = stringResource(R.string.usage_title), onBack = onBack) {
         if (!isLoaded) return@SettingsScaffold
+
+        val snap = snapshot
+        if (snap != null) {
+            SettingsSection(header = stringResource(R.string.usage_section_period)) {
+                PeriodRow(
+                    title = stringResource(R.string.usage_range_today),
+                    totals = snap.today,
+                    showDivider = true,
+                )
+                PeriodRow(
+                    title = stringResource(R.string.usage_range_week),
+                    totals = snap.week,
+                    showDivider = true,
+                )
+                PeriodRow(
+                    title = stringResource(R.string.usage_range_month),
+                    totals = snap.month,
+                    showDivider = true,
+                )
+                PeriodRow(
+                    title = stringResource(R.string.usage_range_all),
+                    totals = snap.all,
+                    showDivider = false,
+                )
+            }
+            val days = UsagePeriod.chartDays(snap, UsageRange.ALL, System.currentTimeMillis(), TimeZone.getDefault())
+            if (snap.all.chartTokens > 0) {
+                val maxTokens = days.maxOf { it.totals.chartTokens }.coerceAtLeast(1)
+                SettingsSection(header = stringResource(R.string.usage_section_recent_days)) {
+                    days.forEachIndexed { idx, row ->
+                        DayUsageRow(
+                            dayLabel = UsagePeriod.shortDayLabel(row.dayKey),
+                            totals = row.totals,
+                            maxTokens = maxTokens,
+                            showDivider = idx < days.size - 1,
+                        )
+                    }
+                }
+            }
+        }
 
         SettingsSection(header = stringResource(R.string.usage_section_total)) {
             val stats = listOfNotNull(
@@ -249,6 +304,13 @@ fun UsageStatsScreen(
                 if (grandTotal.cacheReadTokens > 0) stringResource(R.string.usage_label_cache_read) to formatCount(grandTotal.cacheReadTokens) else null,
                 if (grandTotal.cacheCreationTokens > 0) stringResource(R.string.usage_label_cache_creation) to formatCount(grandTotal.cacheCreationTokens) else null,
                 grandTotal.cacheHitRate?.let { rate -> stringResource(R.string.usage_label_cache_hit_rate) to String.format("%.1f%%", rate) },
+                stringResource(R.string.usage_label_est_cost) to com.openminis.app.usage.UsageCostEstimator.formatUsd(
+                    com.openminis.app.usage.UsageCostEstimator.estimateUsd(
+                        (grandTotal.totalInput - grandTotal.cacheReadTokens).coerceAtLeast(0),
+                        grandTotal.outputTokens,
+                        grandTotal.cacheReadTokens,
+                    ),
+                ),
             )
             stats.forEachIndexed { idx, (label, value) ->
                 SettingsValueRow(
@@ -272,6 +334,70 @@ fun UsageStatsScreen(
         }
 
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PeriodRow(title: String, totals: TokenTotals, showDivider: Boolean) {
+    SettingsValueRow(
+        title = title,
+        value = "${formatCount(totals.totalInput)} / ${formatCount(totals.outputTokens)}",
+        subtitle = com.openminis.app.usage.UsageCostEstimator.formatUsd(totals.estimatedUsd),
+        valueColor = MaterialTheme.colorScheme.onSurface,
+        showDivider = showDivider,
+    )
+}
+
+@Composable
+private fun DayUsageRow(
+    dayLabel: String,
+    totals: TokenTotals,
+    maxTokens: Long,
+    showDivider: Boolean,
+) {
+    val frac = if (maxTokens <= 0) 0f else (totals.chartTokens.toFloat() / maxTokens).coerceIn(0f, 1f)
+    Column {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(dayLabel, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "${formatCount(totals.totalInput)} / ${formatCount(totals.outputTokens)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                if (frac > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(frac)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.primary),
+                    )
+                }
+            }
+        }
+        if (showDivider) {
+            val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 14.dp)
+                    .height(0.5.dp)
+                    .background(divider),
+            )
+        }
     }
 }
 

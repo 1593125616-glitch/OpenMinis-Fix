@@ -872,6 +872,12 @@
     <string name="storage_clear_confirm_text">這會刪除 %1$s 的檔案。此操作無法復原。</string>
     <string name="storage_clear_confirm_button">清除 %1$s</string>
     <string name="usage_title">用量</string>
+    <string name="usage_section_period">依週期</string>
+    <string name="usage_range_today">今日</string>
+    <string name="usage_range_week">本週</string>
+    <string name="usage_range_month">本月</string>
+    <string name="usage_range_all">全部</string>
+    <string name="usage_section_recent_days">最近 14 天</string>
     <string name="usage_section_total">總用量</string>
     <string name="usage_label_total_input">輸入總計（含快取）</string>
     <string name="usage_label_output">輸出 Token</string>

@@ -36,7 +36,20 @@ class NodeRegistry {
         return e.node
     }
 
-    fun clear() { map.clear() }
+    fun clear() { map.clear(); snapshotIds.clear() }
+
+    private val snapshotIds = java.util.ArrayList<String>()
+
+    fun rememberSnapshot(ids: List<String>) {
+        snapshotIds.clear()
+        snapshotIds.addAll(ids)
+    }
+
+    fun resolveRef(token: String): String {
+        val idx = com.openminis.app.a11y.A11ySnapshotFormatter.parseRef(token)
+            ?: return token
+        return snapshotIds.getOrNull(idx) ?: token
+    }
 
     private fun evictExpired() {
         val now = System.currentTimeMillis()

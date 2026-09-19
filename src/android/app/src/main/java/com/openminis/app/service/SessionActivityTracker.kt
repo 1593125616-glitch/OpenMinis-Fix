@@ -250,17 +250,7 @@ object SessionActivityTracker {
      * looks like a UI bug.
      */
     fun publishLastReply(sessionId: String, fullText: String?) {
-        val collapsed = fullText
-            ?.lineSequence()
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.joinToString(" ")
-            ?.takeIf { it.isNotBlank() } ?: return
-        val excerpt = if (collapsed.length > REPLY_EXCERPT_MAX) {
-            collapsed.substring(0, REPLY_EXCERPT_MAX).trimEnd() + "…"
-        } else {
-            collapsed
-        }
+        val excerpt = OverlayStatusText.excerptTail(fullText, REPLY_EXCERPT_MAX) ?: return
         _currentSessionId.value = sessionId
         _lastReplyExcerpt.value = excerpt
     }

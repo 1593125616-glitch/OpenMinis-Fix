@@ -467,6 +467,15 @@ internal fun ToolDetailSheet(
                     .fillMaxWidth(),
             ) {
                 when (block.toolName) {
+                    "canvas" -> {
+                        androidx.compose.foundation.layout.Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                        ) {
+                            CanvasHost(raw = block.content)
+                        }
+                    }
                     // ── Shell: black rounded terminal card (mirrors iOS ToolLiveSheet) ──
                     "shell_execute" -> {
                         val command = extractShellCommand(toolArgsObj, block)

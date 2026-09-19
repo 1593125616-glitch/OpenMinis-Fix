@@ -1066,6 +1066,9 @@ class ProviderRepository(private val context: Context) {
         return availableMemberEntries(group).firstOrNull()
     }
 
+    fun entryById(id: String): com.openminis.app.data.model.ModelEntry? =
+        _config.value.modelEntries.find { it.id == id }
+
     /**
      * [T-disabled-provider-via-group-android] True when [entryId] resolves
      * to an entry whose provider instance is currently enabled. Used by the
@@ -2426,8 +2429,19 @@ class ProviderRepository(private val context: Context) {
      * call sites keep their skip semantics for everything else (notably OAuth
      * instances without a token, which must stay unauthenticated).
      */
-    fun usableApiKey(instance: ProviderInstance): String? =
-        loadApiKey(instance.id) ?: if (instance.allowsEmptyAPIKey) "" else null
+    fun usableApiKey(instance: ProviderInstance): String? {
+        val primary = loadApiKey(instance.id)
+        val extras = com.openminis.app.agent.KeyPool.extras(encryptedPrefs, instance.id)
+        val picked = com.openminis.app.agent.KeyPool.pick(instance.id, primary, extras)
+        return picked ?: if (instance.allowsEmptyAPIKey) "" else null
+    }
+
+    fun extraApiKeysRaw(instanceId: String): String =
+        encryptedPrefs.getString("keypool_$instanceId", "") ?: ""
+
+    fun saveExtraApiKeys(instanceId: String, raw: String) {
+        com.openminis.app.agent.KeyPool.setExtras(encryptedPrefs, instanceId, raw)
+    }
 
     fun deleteApiKey(instanceId: String) {
         encryptedPrefs.edit().remove("apikey_$instanceId").apply()

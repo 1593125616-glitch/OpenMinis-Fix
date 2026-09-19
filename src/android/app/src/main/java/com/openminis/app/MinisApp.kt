@@ -473,6 +473,18 @@ class MinisApp : Application(), ImageLoaderFactory {
             Log.w("MinisApp", "scheduled-task rescheduleAll failed", t)
         }
 
+        try {
+            com.openminis.app.channel.ChannelService.startIfEnabled(this)
+        } catch (t: Throwable) {
+            Log.w("MinisApp", "channel service start failed", t)
+        }
+
+        try {
+            com.openminis.app.agent.AgentModeStore.init(this)
+        } catch (t: Throwable) {
+            Log.w("MinisApp", "agent mode init failed", t)
+        }
+
         // [T-soul-md] Seed SOUL.md with the default content on first launch
         // so the Soul settings page and chat bubble identity have a real
         // file to read. Safe no-op on subsequent launches — never

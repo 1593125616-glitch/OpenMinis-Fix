@@ -146,7 +146,9 @@ class MemoryRepository(private val memoryDir: File) {
 
         for ((label, file) in filesToSearch) {
             if (totalLines >= lineCap || byteCapHit) break
-            val content = try { file.readText() } catch (_: Exception) { continue }
+            val content = try {
+                com.openminis.app.memory.MemoryPrivacy.stripPrivate(file.readText())
+            } catch (_: Exception) { continue }
             if (content.isEmpty()) continue
             val budget = lineCap - totalLines
 
@@ -192,7 +194,8 @@ class MemoryRepository(private val memoryDir: File) {
                             }
                             break
                         }
-                        fileMatches.add(lines.subList(range.first, range.last + 1).joinToString("\n"))
+                        val cited = com.openminis.app.memory.MemoryPrivacy.cite(label, range.first + 1, lines[range.first])
+                        fileMatches.add(cited + "\n" + lines.subList(range.first, range.last + 1).joinToString("\n"))
                         totalLines += chunkLines
                     }
 

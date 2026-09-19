@@ -3,13 +3,16 @@ package com.openminis.app.debug
 import android.content.Context
 import androidx.lifecycle.ViewModelProvider
 import com.openminis.app.MinisApp
+import com.openminis.app.channel.ChannelPrefs
 import com.openminis.app.data.model.ThinkingLevel
 import com.openminis.app.ui.chat.ChatViewModel
 import com.openminis.app.ui.chat.ChatViewModelStore
 import com.openminis.app.ui.chat.InputAttachment
 import com.openminis.app.ui.chat.addAttachment
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -86,6 +89,24 @@ internal object HeadlessChatRunner {
             s.id
         }
 
+    /** Reuse a bound session so Telegram/HTTP/subagent don't spam the session list. */
+    suspend fun ensureBoundSession(
+        context: Context,
+        prefs: ChannelPrefs,
+        key: String,
+        source: String,
+    ): String {
+        val existing = prefs.sessionIdFor(key)
+        if (existing != null) {
+            val still = app(context).chatRepository.getSession(existing)
+            if (still != null) return existing
+        }
+        val id = ensureSession(context)
+        runCatching { app(context).chatRepository.dao.updateSource(id, source) }
+        prefs.bindSession(key, id)
+        return id
+    }
+
     /**
      * Apply a model-entry / model-group override to a session before send.
      * - `modelEntryId`: bind to a specific entry (`binding=entry`).
@@ -158,7 +179,11 @@ internal object HeadlessChatRunner {
         thinkingLevel: ThinkingLevel? = null,
         wait: Boolean,
         timeoutMs: Long,
-    ): PromptResult = withContext(Dispatchers.Main) {
+    ): PromptResult {
+        com.openminis.app.agent.HeadlessGuard.enter()
+        var retain = false
+        try {
+            return withContext(Dispatchers.Main) {
         val vm = viewModel(context, sessionId)
         // Apply per-call thinking override BEFORE sendMessage so streamMessage
         // picks up the new level. Caller passes null to keep the VM's existing
@@ -214,7 +239,11 @@ internal object HeadlessChatRunner {
         }
         for (att in attachments) vm.addAttachment(att)
         vm.sendMessage(text)
-        if (!wait) return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
+        if (!wait) {
+            retain = true
+            retainHeadlessUntilIdle(vm)
+            return@withContext PromptResult(status = "Running", responseText = null, timedOut = false)
+        }
 
         // Wait for isStreaming to be false (sendMessage flips it true synchronously
         // before launching its coroutine; if it never flips true the message was
@@ -232,6 +261,7 @@ internal object HeadlessChatRunner {
             }
             true
         } ?: false
+        if (!finished) runCatching { vm.cancelStream() }
 
         // Best-effort: read the last assistant text from the DB so we don't
         // depend on the in-memory UI list (which may not have flushed yet).
@@ -244,6 +274,21 @@ internal object HeadlessChatRunner {
             responseText = responseText,
             timedOut = !finished,
         )
+            }
+        } finally {
+            if (!retain) com.openminis.app.agent.HeadlessGuard.leave()
+        }
+    }
+
+    private fun retainHeadlessUntilIdle(vm: ChatViewModel) {
+        vm.viewModelScope.launch {
+            try {
+                withTimeoutOrNull(2_000L) { vm.isStreaming.first { it } }
+                if (vm.isStreaming.value) vm.isStreaming.first { !it }
+            } finally {
+                com.openminis.app.agent.HeadlessGuard.leave()
+            }
+        }
     }
 
     suspend fun retry(
@@ -252,7 +297,8 @@ internal object HeadlessChatRunner {
         messageId: String?,
         wait: Boolean,
         timeoutMs: Long,
-    ): PromptResult = withContext(Dispatchers.Main) {
+    ): PromptResult = com.openminis.app.agent.HeadlessGuard.withHeadless {
+        withContext(Dispatchers.Main) {
         val app = app(context)
         val vm = viewModel(context, sessionId)
         val targetMsgId = messageId ?: run {
@@ -285,6 +331,8 @@ internal object HeadlessChatRunner {
         }
         vm.retryFromMessage(targetMsgId)
         if (!wait) {
+            com.openminis.app.agent.HeadlessGuard.enter()
+            retainHeadlessUntilIdle(vm)
             return@withContext PromptResult(
                 status = "Retrying",
                 responseText = null,
@@ -299,6 +347,7 @@ internal object HeadlessChatRunner {
             }
             true
         } ?: false
+        if (!finished) runCatching { vm.cancelStream() }
         val msgs = app.chatRepository.dao.loadMessages(sessionId)
         val lastAssistant = msgs.lastOrNull { it.role == "assistant" }
         val responseText = lastAssistant?.let { extractText(it.partsJson) }
@@ -309,6 +358,7 @@ internal object HeadlessChatRunner {
             deletedMessageCount = deletedCount,
             retriedMessageId = targetMsgId,
         )
+        }
     }
 
     /**

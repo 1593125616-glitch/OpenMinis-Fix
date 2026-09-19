@@ -57,7 +57,7 @@ Use --compact to emit on a single line; --quiet to strip the envelope.
 First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 """
         private const val SERVICE_HELP = "service status | ping\n"
-        private const val UI_HELP = """ui dump | find | info | node | screenshot
+        private const val UI_HELP = """ui dump | snapshot | find | info | node | screenshot
 
   ui screenshot                Capture a system-wide screenshot via
                                AccessibilityService.takeScreenshot (API 30+).
@@ -241,6 +241,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         return when (args.positional.getOrNull(1)) {
             null         -> NativeOffloadResult(2, UI_HELP)
             "dump"       -> uiDump(args)
+            "snapshot"   -> uiSnapshot(args)
             "find"       -> uiFind(args)
             "info"       -> uiInfo(args)
             "node"       -> uiNode(args)
@@ -259,6 +260,36 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             walkNode(svc.nodeRegistry, root, 0, maxDepth, visibleOnly, compact, arr)
         }
         return ok(args, JSONObject().put("count", arr.length()).put("nodes", arr))
+    }
+
+    private fun uiSnapshot(args: OffloadArgs): NativeOffloadResult {
+        val svc = svcOrThrow()
+        val maxDepth = args.getInt("depth") ?: 10
+        val arr = JSONArray()
+        for (root in svc.rootNodes()) {
+            walkNode(svc.nodeRegistry, root, 0, maxDepth, visibleOnly = true, compact = false, arr)
+        }
+        val nodes = ArrayList<com.openminis.app.a11y.A11yNode>()
+        val ids = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val id = o.optString("nodeId")
+            ids.add(id)
+            val role = o.optString("className").substringAfterLast('.').ifBlank { "node" }
+            val text = o.optString("text").ifBlank { o.optString("contentDesc") }
+            nodes.add(
+                com.openminis.app.a11y.A11yNode(
+                    id = id,
+                    role = role,
+                    text = text,
+                    clickable = o.optBoolean("clickable"),
+                    editable = o.optBoolean("editable"),
+                ),
+            )
+        }
+        svc.nodeRegistry.rememberSnapshot(ids)
+        val text = com.openminis.app.a11y.A11ySnapshotFormatter.format(nodes)
+        return ok(args, JSONObject().put("text", text).put("count", nodes.size))
     }
 
     private fun walkNode(
@@ -374,8 +405,9 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 
     private fun uiNode(args: OffloadArgs): NativeOffloadResult {
         val svc = svcOrThrow()
-        val nodeId = args.positional.getOrNull(2)
+        val rawId = args.positional.getOrNull(2)
             ?: return NativeOffloadResult(2, "$TOOL ui node: missing <nodeId>\n")
+        val nodeId = svc.nodeRegistry.resolveRef(rawId)
         val n = svc.nodeRegistry.get(nodeId)
             ?: return err(args, "NODE_NOT_FOUND", "no live node with id=$nodeId; re-run `ui dump`")
         val data = nodeToJson(svc.nodeRegistry, n, 0, compact = false)
@@ -470,8 +502,9 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 
     private fun tapNode(args: OffloadArgs): NativeOffloadResult {
         val svc = svcOrThrow()
-        val nodeId = args.positional.getOrNull(2)
+        val rawId = args.positional.getOrNull(2)
             ?: return NativeOffloadResult(2, "$TOOL tap node: missing <nodeId>\n")
+        val nodeId = svc.nodeRegistry.resolveRef(rawId)
         val n = svc.nodeRegistry.get(nodeId)
             ?: return err(args, "NODE_NOT_FOUND", "no live node with id=$nodeId")
         val action = if (args.hasFlag("long")) AccessibilityNodeInfo.ACTION_LONG_CLICK

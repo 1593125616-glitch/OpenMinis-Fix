@@ -65,9 +65,18 @@ class ToolCallAdjacencyTest {
     /** Send [messages] and return the parsed outbound body. */
     private fun capture(messages: List<LLMMessage>): JSONObject {
         server.enqueue(
-            MockResponse().setBody(
-                """{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}""",
-            ),
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    """
+                    data: {"choices":[{"delta":{"content":"ok"}}]}
+
+                    data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """.trimIndent() + "\n",
+                ),
         )
         runBlocking { provider.sendMessage(messages, null, 1024) }
         return JSONObject(server.takeRequest().body.readUtf8())

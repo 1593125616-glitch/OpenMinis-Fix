@@ -38,6 +38,34 @@ class OpenAIProviderTest {
         server.shutdown()
     }
 
+
+    private fun enqueueOkSse(
+        content: String = "ok",
+        finishReason: String? = "stop",
+        promptTokens: Int = 0,
+        completionTokens: Int = 0,
+        cachedTokens: Int? = null,
+    ) {
+        val usage = buildString {
+            append("\"prompt_tokens\":$promptTokens,\"completion_tokens\":$completionTokens")
+            if (cachedTokens != null) {
+                append(",\"prompt_tokens_details\":{\"cached_tokens\":$cachedTokens}")
+            }
+        }
+        val sse = buildString {
+            if (content.isNotEmpty()) {
+                appendLine("""data: {"choices":[{"delta":{"content":${JSONObject.quote(content)}}}]}""")
+                appendLine()
+            }
+            val fr = if (finishReason != null) ",\"finish_reason\":\"$finishReason\"" else ""
+            appendLine("""data: {"choices":[{"delta":{}$fr}],"usage":{$usage}}""")
+            appendLine()
+            appendLine("data: [DONE]")
+            appendLine()
+        }
+        server.enqueue(MockResponse().setBody(sse).setHeader("Content-Type", "text/event-stream"))
+    }
+
     // -- sendMessage response parsing --
 
     @Test
@@ -52,7 +80,7 @@ class OpenAIProviderTest {
         }
         """.trimIndent()
 
-        server.enqueue(MockResponse().setBody(responseBody))
+        enqueueOkSse("Hello from GPT!", "stop", 10, 5)
 
         val response = provider.sendMessage(
             listOf(LLMMessage(LLMMessage.Role.USER, "Hi")),
@@ -78,12 +106,13 @@ class OpenAIProviderTest {
         }
         """.trimIndent()
 
-        server.enqueue(MockResponse().setBody(responseBody))
+        enqueueOkSse("ok", "stop", 100, 10, 50)
         val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
 
-        assertEquals(100, response.usage?.inputTokens)
+        assertEquals(50, response.usage?.inputTokens)
         assertEquals(10, response.usage?.outputTokens)
         assertEquals(50, response.usage?.cacheReadInputTokens)
+        assertEquals(100, response.usage?.latestContextTokens)
         assertNull(response.usage?.cacheCreationInputTokens)
     }
 
@@ -100,25 +129,27 @@ class OpenAIProviderTest {
         }
         """.trimIndent()
 
-        server.enqueue(MockResponse().setBody(responseBody))
+        enqueueOkSse("ok", "stop", 10, 5, 0)
         val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
         assertNull(response.usage?.cacheReadInputTokens)
     }
 
     @Test
     fun `sendMessage handles empty choices`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":0}}"""))
-
-        val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
-        assertEquals("", response.text)
-        assertNull(response.stopReason)
+        enqueueOkSse(content = "", finishReason = null, promptTokens = 5, completionTokens = 0)
+        try {
+            provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
+            throw AssertionError("empty stream should be treated as a transient drop")
+        } catch (e: LLMError.TransientError) {
+            assertTrue(e.message!!.contains("empty response"))
+        }
     }
 
     // -- Request construction --
 
     @Test
     fun `sendMessage includes Bearer auth header`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
 
@@ -129,7 +160,7 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage includes system prompt as system message`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(
             listOf(LLMMessage(LLMMessage.Role.USER, "test")),
@@ -148,7 +179,7 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage omits system message when null`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
 
@@ -161,7 +192,7 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage includes temperature when set`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100, temperature = 0.8)
 
@@ -172,7 +203,7 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage omits temperature when null`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100, temperature = null)
 
@@ -183,7 +214,7 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage uses max_completion_tokens for OpenAI`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 2048)
 
@@ -195,14 +226,14 @@ class OpenAIProviderTest {
 
     @Test
     fun `sendMessage sets stream false for non-streaming`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}"""))
+        enqueueOkSse()
 
         provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "test")), null, 100)
 
         val request = server.takeRequest()
         val body = JSONObject(request.body.readUtf8())
-        assertEquals(false, body.getBoolean("stream"))
-        assertTrue(!body.has("stream_options"))
+        assertEquals(true, body.getBoolean("stream"))
+        assertTrue(body.has("stream_options"))
     }
 
     // -- Streaming --
@@ -361,12 +392,7 @@ class OpenAIProviderTest {
 
     /** Drive one request through the real stack and return the parsed body. */
     private fun captureBody(model: LLMModel, level: ThinkingLevel): JSONObject {
-        server.enqueue(
-            MockResponse().setBody(
-                """{"choices":[{"message":{"role":"assistant","content":"ok"},
-                   "finish_reason":"stop"}]}""".trimIndent(),
-            ),
-        )
+        enqueueOkSse()
         provider.model = model
         runBlocking {
             provider.sendMessageClamped(

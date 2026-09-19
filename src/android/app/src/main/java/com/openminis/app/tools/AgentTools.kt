@@ -27,6 +27,7 @@ object AgentTools {
         // attempt those calls. Mirrors the iOS gate at
         // AIChatViewModel.makeAgentTools(memoryEnabled:).
         memoryEnabled: Boolean = true,
+        desktopConfigured: Boolean = false,
     ): List<AgentToolDefinition> = buildList {
         add(shellExecuteDefinition())
         add(TaskOutputTool.definition())
@@ -41,6 +42,11 @@ object AgentTools {
             add(memoryWriteDefinition())
             add(memoryGetDefinition())
         }
+        if (!SubagentTool.inChild()) {
+            add(SubagentTool.definition())
+        }
+        add(CanvasTool.definition())
+        if (desktopConfigured) add(DesktopRunTool.definition())
     }
 
     // Aligned with iOS AIChatViewModel.swift:4982-4993
