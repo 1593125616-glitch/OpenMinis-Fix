@@ -773,17 +773,14 @@ class AgentForegroundService : Service() {
     ) {
         val lyric = OverlayStatusText.marqueeLyric(title)
         // Replacing TITLE restarts Flyme's RTL marquee. Same lyric stays.
+        // Do not also publish DISPLAY_TITLE / LYRICS — OEM lyrics chips
+        // render those as extra rows of the same text.
         if (broadcast && OverlayStatusText.shouldReplaceLyric(lastMediaLyric, lyric)) {
             lastMediaLyric = lyric
             lastMediaArtist = status
             val meta = android.support.v4.media.MediaMetadataCompat.Builder()
                 .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE, lyric)
-                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, lyric)
-                .putString("lyric", lyric)
-                .putString("android.media.metadata.LYRICS", lyric)
                 .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ARTIST, status)
-                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_ALBUM, status)
-                .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, status)
             if (isCompleted) {
                 meta.putLong(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_DURATION, elapsedMs)
             }
@@ -1043,7 +1040,7 @@ class AgentForegroundService : Service() {
         //   2. setTicker(状态行)            → status-bar "lyrics"
         //   3. MediaSession + MediaStyle    → player card; position ticks locally
         val compactText = if (isCompleted) collapsedText else "$sessionLabel | $toolStatus"
-        val ticker = if (showStatusBarProgress) OverlayStatusText.marqueeLyric(glance) else titleText
+        val ticker = if (showStatusBarProgress) glance else titleText
         val whenMs = wallClockWhenMs(System.currentTimeMillis(), elapsedMs)
         val session = ensureMediaSession()
         if (session != null) {

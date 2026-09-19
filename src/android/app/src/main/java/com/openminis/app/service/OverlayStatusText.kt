@@ -52,20 +52,23 @@ object OverlayStatusText {
     }
 
     /**
-     * Flyme / OEM status-bar lyrics marquee right-to-left when TITLE is
-     * wider than the chip. Repeat the current snippet with a gap so a short
-     * tool title still scrolls instead of sitting still or jumping lines.
+     * One status-bar line. Flyme / ColorOS "lyrics" chips draw 2–3 rows and
+     * treat TITLE, DISPLAY_TITLE, and LYRICS as separate lines. Concatenating
+     * the same snippet (or publishing it on all three keys) stacked three
+     * identical rows that then popped vertically instead of marqueeing.
+     *
+     * Keep a single copy, cap it to one chip, and pad with ideographic
+     * spaces so a short tool title is wider than the chip and the ROM can
+     * RTL-scroll that one copy.
      */
-    fun marqueeLyric(text: String, minLen: Int = 56): String {
-        val core = text.replace('\n', ' ').trim()
+    const val STATUS_BAR_MIN = 28
+    const val STATUS_BAR_MAX = 36
+
+    fun marqueeLyric(text: String, minWidth: Int = STATUS_BAR_MIN): String {
+        val core = clip(text, STATUS_BAR_MAX)
         if (core.isEmpty()) return core
-        val gap = "          "
-        val looped = buildString {
-            append(core)
-            while (length < minLen) append(gap).append(core)
-            if (length == core.length) append(gap).append(core)
-        }
-        return if (looped.length <= 240) looped else looped.take(240)
+        if (core.length >= minWidth) return core
+        return core + "\u3000".repeat(minWidth - core.length)
     }
 
     fun shouldReplaceLyric(previous: String?, next: String): Boolean = previous != next
